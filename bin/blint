@@ -1,0 +1,31 @@
+#!/usr/bin/env node
+
+var blint = require("../blint"), fs = require("fs");
+
+var args = require("nomnom")
+    .option("ecmaVersion", {help: "ECMAScript version to parse"})
+    .option("browser", {help: "Allow browser globals", flag: true})
+    .option("tabs", {help: "Allow tabs", flag: true})
+    .option("trailing", {help: "Allow trailing whitespace", flag: true})
+    .option("autoSemicolons", {help: "Allow semicolon insertion", flag: true})
+    .option("trailingCommas", {help: "Allow trailing commas", flag: true})
+    .option("noReservedProps", {help: "Disallow reserved words as property names", flag: true})
+    .option("noDeclareGlobals", {help: "Disallow code to declare globals", flag: true})
+    .parse();
+
+var options = {ecmaVersion: args.ecmaVersion || 5,
+               browser: args.browser,
+               tabs: args.tabs,
+               trailing: args.trailing,
+               autoSemicolons: args.autoSemicolons,
+               trailingCommas: args.trailingCommas,
+               reservedProps: !args.noReservedProps,
+               declareGlobals: !args.noDeclareGlobals};
+
+for (var i = 0; args.hasOwnProperty(i); i++) {
+  var stat = fs.statSync(args[i]);
+  if (stat.isDirectory()) blint.checkDir(args[i], options);
+  else blint.checkFile(args[i], options);
+}
+
+process.exit(blint.success() ? 0 : 1);
