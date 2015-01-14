@@ -50,9 +50,9 @@ var scopePasser = walk.make({
 function checkFile(fileName, options) {
   options = getOptions(options);
   var file = fs.readFileSync(fileName, "utf8"), bad, msg;
-  if (options.trailing)
+  if (!options.trailing)
     bad = file.match(/[\t ]\n/);
-  if (!bad && options.tabs)
+  if (!bad && !options.tabs)
     bad = file.match(/\t/);
   if (!bad)
     bad = file.match(/[\x00-\x08\x0b\x0c\x0e-\x19\uFEFF]/);
