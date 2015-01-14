@@ -66,7 +66,7 @@ function checkFile(fileName, options) {
 
   if (options.blob && file.slice(0, options.blob.length) != options.blob)
     fail("Missing license blob", {source: fileName});
-  
+
   var globalsSeen = Object.create(null);
 
   try {
@@ -163,6 +163,8 @@ function checkFile(fileName, options) {
     },
     ForStatement: function(node) {
       checkReusedIndex(node);
+      if (node.test && node.update)
+        checkObviousInfiniteLoop(node.test, node.update);
     },
     MemberExpression: function(node) {
       if (node.object.type == "Identifier" && node.object.name == "console" && !node.computed)
@@ -183,6 +185,49 @@ function checkFile(fileName, options) {
           if (node.declarations[i].id.name == name)
             fail("redefined loop variable", node.declarations[i].id.loc);
         walk.base.VariableDeclaration(node, st, c);
+      }
+    });
+  }
+
+  function checkObviousInfiniteLoop(test, update) {
+    var vars = Object.create(null);
+    function opDir(op) {
+      if (/[<+]/.test(op)) return 1;
+      if (/[->]/.test(op)) return -1;
+      return 0;
+    }
+    function store(name, dir) {
+      if (!(name in vars)) vars[name] = {below: false, above: false};
+      if (dir > 0) vars[name].up = true;
+      if (dir < 0) vars[name].down = true;
+    }
+    function check(node, dir) {
+      var known = vars[node.name];
+      if (!known) return;
+      if (dir > 0 && known.down && !known.up ||
+          dir < 0 && known.up && !known.down)
+        fail("Suspiciously infinite-looking loop", node.loc);
+    }
+    walk.simple(test, {
+      BinaryExpression: function(node) {
+        if (node.left.type == "Identifier")
+          store(node.left.name, opDir(node.operator));
+        if (node.right.type == "Identifier")
+          store(node.right.name, -opDir(node.operator));
+      }
+    });
+    walk.simple(update, {
+      UpdateExpression: function(node) {
+        if (node.argument.type == "Identifier")
+          check(node.argument, opDir(node.operator));
+      },
+      AssignmentExpression: function(node) {
+        if (node.left.type == "Identifier") {
+          if (node.operator == "=" && node.right.type == "BinaryExpression" && node.right.left.name == node.left.name)
+            check(node.left, opDir(node.right.operator));
+          else
+            check(node.left, opDir(node.operator));
+        }
       }
     });
   }
