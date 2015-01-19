@@ -10,6 +10,7 @@ var args = require("nomnom")
     .option("autoSemicolons", {help: "Allow semicolon insertion", flag: true})
     .option("trailingCommas", {help: "Allow trailing commas", flag: true})
     .option("noReservedProps", {help: "Disallow reserved words as property names", flag: true})
+    .option("namedFunctions", {help: "Allow named function expressions", flag: true})
     .option("noDeclareGlobals", {help: "Disallow code to declare globals", flag: true})
     .parse();
 
@@ -20,6 +21,7 @@ var options = {ecmaVersion: args.ecmaVersion || 5,
                autoSemicolons: args.autoSemicolons,
                trailingCommas: args.trailingCommas,
                reservedProps: !args.noReservedProps,
+               namedFunctions: args.namedFunctions,
                declareGlobals: !args.noDeclareGlobals};
 
 for (var i = 0; args.hasOwnProperty(i); i++) {

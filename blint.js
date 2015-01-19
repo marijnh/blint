@@ -28,6 +28,7 @@ var defaultOptions = {
   autoSemicolons: false,
   trailingCommas: false,
   reservedProps: false,
+  namedFunctions: false,
   declareGlobals: true,
   allowedGlobals: null,
   blob: false
@@ -160,7 +161,7 @@ function checkFile(fileName, options) {
       globalsSeen[node.name] = node.loc;
     },
     FunctionExpression: function(node) {
-      if (node.id) fail("Named function expression", node.loc);
+      if (node.id && !options.namedFunctions) fail("Named function expression", node.loc);
     },
     ForStatement: function(node) {
       checkReusedIndex(node);
