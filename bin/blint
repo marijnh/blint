@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-var blint = require("../blint"), fs = require("fs");
+var blint = require("../blint"), fs = require("fs"), path = require("path");
 
 var args = require("nomnom")
     .option("ecmaVersion", {help: "ECMAScript version to parse"})
@@ -12,17 +12,37 @@ var args = require("nomnom")
     .option("noReservedProps", {help: "Disallow reserved words as property names", flag: true})
     .option("namedFunctions", {help: "Allow named function expressions", flag: true})
     .option("noDeclareGlobals", {help: "Disallow code to declare globals", flag: true})
+    .option("package", {help: "Get options from package.json", flag: true})
     .parse();
 
-var options = {ecmaVersion: args.ecmaVersion || 5,
-               browser: args.browser,
-               tabs: args.tabs,
-               trailing: args.trailing,
-               autoSemicolons: args.autoSemicolons,
-               trailingCommas: args.trailingCommas,
-               reservedProps: !args.noReservedProps,
-               namedFunctions: args.namedFunctions,
-               declareGlobals: !args.noDeclareGlobals};
+function findPackage(dir) {
+  for (;;) {
+    try {
+      var package = path.resolve(dir, "package.json");
+      if (fs.statSync(package).isFile())
+        return JSON.parse(fs.readFileSync(package, "utf8"));
+    } catch(e) {}
+    var shorter = path.dirname(dir);
+    if (shorter == dir) return null;
+    dir = shorter;
+  }
+}
+
+var options;
+if (args.package && args[0]) {
+  var conf = findPackage(args[0]);
+  options = conf && conf.blint;
+} else {
+  options = {ecmaVersion: args.ecmaVersion || 5,
+             browser: args.browser,
+             tabs: args.tabs,
+             trailing: args.trailing,
+             autoSemicolons: args.autoSemicolons,
+             trailingCommas: args.trailingCommas,
+             reservedProps: !args.noReservedProps,
+             namedFunctions: args.namedFunctions,
+             declareGlobals: !args.noDeclareGlobals};
+}
 
 for (var i = 0; args.hasOwnProperty(i); i++) {
   var stat = fs.statSync(args[i]);
