@@ -18,7 +18,7 @@
 var jsGlobals = "Infinity undefined NaN Object Function Array String Number Boolean RegExp Date Error SyntaxError ReferenceError URIError EvalError RangeError TypeError parseInt parseFloat isNaN isFinite eval encodeURI encodeURIComponent decodeURI decodeURIComponent Math JSON require console exports module".split(" ");
 var browserGlobals = "location Node Element Text Document document XMLDocument HTMLElement HTMLAnchorElement HTMLAreaElement HTMLAudioElement HTMLBaseElement HTMLBodyElement HTMLBRElement HTMLButtonElement HTMLCanvasElement HTMLDataElement HTMLDataListElement HTMLDivElement HTMLDListElement HTMLDocument HTMLEmbedElement HTMLFieldSetElement HTMLFormControlsCollection HTMLFormElement HTMLHeadElement HTMLHeadingElement HTMLHRElement HTMLHtmlElement HTMLIFrameElement HTMLImageElement HTMLInputElement HTMLKeygenElement HTMLLabelElement HTMLLegendElement HTMLLIElement HTMLLinkElement HTMLMapElement HTMLMediaElement HTMLMetaElement HTMLMeterElement HTMLModElement HTMLObjectElement HTMLOListElement HTMLOptGroupElement HTMLOptionElement HTMLOptionsCollection HTMLOutputElement HTMLParagraphElement HTMLParamElement HTMLPreElement HTMLProgressElement HTMLQuoteElement HTMLScriptElement HTMLSelectElement HTMLSourceElement HTMLSpanElement HTMLStyleElement HTMLTableCaptionElement HTMLTableCellElement HTMLTableColElement HTMLTableDataCellElement HTMLTableElement HTMLTableHeaderCellElement HTMLTableRowElement HTMLTableSectionElement HTMLTextAreaElement HTMLTimeElement HTMLTitleElement HTMLTrackElement HTMLUListElement HTMLUnknownElement HTMLVideoElement Attr NodeList HTMLCollection NamedNodeMap DocumentFragment DOMTokenList XPathResult ClientRect Event TouchEvent WheelEvent MouseEvent KeyboardEvent HashChangeEvent ErrorEvent CustomEvent BeforeLoadEvent WebSocket Worker localStorage sessionStorage FileList File Blob FileReader URL Range XMLHttpRequest DOMParser Selection console top parent window opener self devicePixelRatio name closed pageYOffset pageXOffset scrollY scrollX screenTop screenLeft screenY screenX innerWidth innerHeight outerWidth outerHeight frameElement crypto navigator history screen postMessage close blur focus onload onunload onscroll onresize ononline onoffline onmousewheel onmouseup onmouseover onmouseout onmousemove onmousedown onclick ondblclick onmessage onkeyup onkeypress onkeydown oninput onpopstate onhashchange onfocus onblur onerror ondrop ondragstart ondragover ondragleave ondragenter ondragend ondrag oncontextmenu onchange onbeforeunload onabort getSelection alert confirm prompt scrollBy scrollTo scroll setTimeout clearTimeout setInterval clearInterval atob btoa addEventListener removeEventListener dispatchEvent getComputedStyle CanvasRenderingContext2D importScripts".split(" ");
 
-var fs = require("fs"), acorn = require("acorn"), walk = require("acorn/util/walk.js");
+var fs = require("fs"), acorn = require("acorn"), walk = require("acorn/dist/walk.js");
 
 var defaultOptions = {
   ecmaVersion: 5,
@@ -75,8 +75,12 @@ function checkFile(fileName, options) {
     var parsed = acorn.parse(file, {
       locations: true,
       ecmaVersion: options.ecmaVersion,
-      strictSemicolons: !options.autoSemicolons,
-      allowTrailingCommas: options.trailingCommas,
+      onInsertedSemicolon: options.autoSemicolons ? null : function(_, loc) {
+        fail("Missing semicolon", {source: fileName, start: loc});
+      },
+      onTrailingComma: options.trailingCommas ? null : function(_, loc) {
+        fail("Trailing comma", {source: fileName, start: loc});
+      },
       forbidReserved: options.reservedProps ? false : "everywhere",
       sourceFile: fileName
     });
