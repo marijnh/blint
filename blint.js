@@ -31,7 +31,8 @@ var defaultOptions = {
   namedFunctions: false,
   declareGlobals: true,
   allowedGlobals: null,
-  blob: false
+  blob: false,
+  message: null
 };
 
 function getOptions(value) {
@@ -46,12 +47,14 @@ function getOptions(value) {
 }
 
 var scopePasser = walk.make({
-  ScopeBody: function(node, _prev, c) { c(node, node.scope); }
+  Statement: function(node, prev, c) { c(node, node.scope || prev); }
 });
 
-function checkFile(fileName, options) {
+function checkFile(fileName, options, file) {
   options = getOptions(options);
-  var file = fs.readFileSync(fileName, "utf8"), bad, msg;
+  if (file == null) file = fs.readFileSync(fileName, "utf8");
+
+  var bad, msg;
   if (!options.trailing)
     bad = file.match(/[\t ]\n/);
   if (!bad && !options.tabs)
@@ -91,78 +94,117 @@ function checkFile(fileName, options) {
 
   var scopes = [];
 
-  function makeScope(prev, isCatch) {
-    return {vars: Object.create(null), prev: prev, isCatch: isCatch};
-  }
-  function normalScope(scope) {
-    while (scope.isCatch) scope = scope.prev;
+  function makeScope(prev, type) {
+    var scope = {vars: Object.create(null), prev: prev, type: type};
+    scopes.push(scope);
     return scope;
   }
+  function fnScope(scope) {
+    while (scope.type != "fn") scope = scope.prev;
+    return scope;
+  }
+  function addVar(scope, name, type, node, deadZone, written) {
+    if (deadZone && (name in scope.vars))
+      fail("Duplicate definition of " + name, node.loc);
+    scope.vars[name] = {type: type, node: node, deadZone: deadZone,
+                        written: written, read: false};
+  }
 
-  var topScope = {vars: Object.create(null)};
+  function makeCx(scope, binding) {
+    return {scope: scope, binding: binding};
+  }
 
-  walk.recursive(parsed, topScope, {
-    ScopeBody: function(node, scope, c) {
-      node.scope = scope;
-      scopes.push(scope);
-      c(node, scope);
-    },
-    Function: function(node, scope, c) {
-      var inner = makeScope(scope);
+  function isBlockScopedDecl(node) {
+    return node.type == "VariableDeclaration" && node.kind != "var";
+  }
+
+  var topScope = makeScope(null, "fn");
+
+  walk.recursive(parsed, makeCx(topScope), {
+    Function: function(node, cx, c) {
+      var inner = node.scope = node.body.scope = makeScope(cx.scope, "fn");
+      var innerCx = makeCx(inner, {scope: inner, type: "argument", deadZone: true, written: true});
       for (var i = 0; i < node.params.length; ++i)
-        inner.vars[node.params[i].name] = {type: "argument", node: node.params[i]};
+        c(node.params[i], innerCx, "Pattern");
+
       if (node.id) {
         var decl = node.type == "FunctionDeclaration";
-        (decl ? normalScope(scope) : inner).vars[node.id.name] =
-          {type: decl ? "function" : "function name", node: node.id};
+        addVar(decl ? cx.scope : inner, node.id.name,
+               decl ? "function" : "function name", node.id, false, true);
       }
-      c(node.body, inner, "ScopeBody");
+      c(node.body, innerCx, "ScopeBody");
     },
-    TryStatement: function(node, scope, c) {
-      c(node.block, scope, "Statement");
+    TryStatement: function(node, cx, c) {
+      c(node.block, cx, "Statement");
       if (node.handler) {
-        var inner = makeScope(scope, true);
-        inner.vars[node.handler.param.name] = {type: "catch clause", node: node.handler.param};
-        c(node.handler.body, inner, "ScopeBody");
+        var inner = node.handler.body = makeScope(cx.scope, "block");
+        addVar(inner, node.handler.param.name, "catch clause", node.handler.param, false, true);
+        c(node.handler.body, makeCx(inner), "ScopeBody");
       }
-      if (node.finalizer) c(node.finalizer, scope, "Statement");
+      if (node.finalizer) c(node.finalizer, cx, "Statement");
     },
-    VariableDeclaration: function(node, scope, c) {
-      var target = normalScope(scope);
+    Class: function(node, cx, c) {
+      if (node.id && node.type == "ClassDeclaration")
+        addVar(cx.scope, node.id.name, "class name", node, true, true);
+      if (node.superClass) c(node.superClass, cx, "Expression");
+      for (var i = 0; i < node.body.body.length; i++)
+        c(node.body.body[i], cx);
+    },
+    Expression: function(node, cx, c) {
+      if (cx.binder) cx = makeCx(cx.scope)
+      c(node, cx);
+    },
+    VariableDeclaration: function(node, cx, c) {
       for (var i = 0; i < node.declarations.length; ++i) {
         var decl = node.declarations[i];
-        target.vars[decl.id.name] = {type: "var", node: decl.id};
-        if (decl.init) c(decl.init, scope, "Expression");
+        c(decl.id, makeCx(cx.scope, {
+          scope: node.kind == "var" ? fnScope(cx.scope) : cx.scope,
+          type: "var",
+          deadZone: node.kind != "var",
+          written: !!decl.init
+        }), "Pattern");
+        if (decl.init) c(decl.init, cx, "Expression");
       }
+    },
+    VariablePattern: function(node, cx, c) {
+      var b = cx.binding;
+      if (b) addVar(b.scope, node.name, b.type, node, b.deadZone, b.written);
+    },
+    BlockStatement: function(node, cx, c) {
+      if (!node.scope && node.body.some(isBlockScopedDecl)) {
+        node.scope = makeScope(scope, "block");
+        cx = makeCx(node.scope)
+      }
+      walk.base.BlockStatement(node, cx, c);
+    },
+    ForInStatement: function(node, cx, c) {
+      if (!node.scope && isBlockScopedDecl(node.left)) {
+        node.scope = node.body.scope = makeScope(scope, "block");
+        cx = makeCx(node.scope);
+      }
+      walk.base.ForInStatement(node, cx, c);
+    },
+    ForStatement: function(node, cx, c) {
+      if (!node.scope && isBlockScopedDecl(node.init)) {
+        node.scope = node.body.scope = makeScope(scope, "block");
+        cx = makeCx(node.scope);
+      }
+      walk.base.ForStatement(node, cx, c);
     }
   }, null);
 
   var ignoredGlobals = Object.create(null);
 
-  function inScope(name, scope) {
-    for (var cur = scope; cur; cur = cur.prev)
-      if (name in cur.vars) return true;
-  }
-  function checkLHS(node, scope) {
-    if (node.type == "Identifier" && !(node.name in ignoredGlobals) &&
-        !inScope(node.name, scope)) {
-      ignoredGlobals[node.name] = true;
-      fail("Assignment to global variable " + node.name + ".", node.loc);
-    }
-  }
-
-  walk.simple(parsed, {
-    UpdateExpression: function(node, scope) {checkLHS(node.argument, scope);},
-    AssignmentExpression: function(node, scope) {checkLHS(node.left, scope);},
+  var checkWalker = {
+    UpdateExpression: function(node, scope) {assignToPattern(node.argument, scope);},
+    AssignmentExpression: function(node, scope) {assignToPattern(node.left, scope);},
     Identifier: function(node, scope) {
+      // FIXME check dead zones
       if (node.name == "arguments") return;
-      // Mark used identifiers
-      for (var cur = scope; cur; cur = cur.prev)
-        if (node.name in cur.vars) {
-          cur.vars[node.name].used = true;
-          return;
-        }
-      globalsSeen[node.name] = node.loc;
+      var found = searchScope(node.name, scope);
+      console.trace("looking up", node.name);
+      if (found) found.read = true;
+      else globalsSeen[node.name] = node.loc;
     },
     FunctionExpression: function(node) {
       if (node.id && !options.namedFunctions) fail("Named function expression", node.loc);
@@ -179,7 +221,35 @@ function checkFile(fileName, options) {
     DebuggerStatement: function(node) {
       fail("Found debugger statement", node.loc);
     }
-  }, scopePasser, topScope);
+  };
+
+  function check(node, scope) {
+    walk.simple(node, checkWalker, scopePasser, scope);
+  }
+  check(parsed, topScope);
+
+  function assignToPattern(node, scope, assigned) {
+    walk.simpleMaybe(node, {
+      Expression: function(node) {
+        check(node, scope);
+        return false;
+      },
+      VariablePattern: function(node) {
+        var found = searchScope(node.name, scope);
+        if (found) {
+          found.written = true;
+        } else if (!(node.name in ignoredGlobals)) {
+          ignoredGlobals[node.name] = true;
+          fail("Assignment to global variable " + node.name + ".", node.loc);
+        }
+      }
+    });
+  }
+
+  function searchScope(name, scope) {
+    for (var cur = scope; cur; cur = cur.prev)
+      if (name in cur.vars) return cur.vars[name];
+  }
 
   function checkReusedIndex(node) {
     if (!node.init || node.init.type != "VariableDeclaration") return;
@@ -254,18 +324,27 @@ function checkFile(fileName, options) {
     var scope = scopes[i];
     for (var name in scope.vars) {
       var info = scope.vars[name];
-      if (!info.used && info.type != "catch clause" && info.type != "function name" && name.charAt(0) != "_")
-        fail("Unused " + info.type + " " + name, info.node.loc);
+      if (!info.read) {
+        if (info.type != "catch clause" && info.type != "function name" && name.charAt(0) != "_")
+          fail("Unused " + info.type + " " + name, info.node.loc);
+      } else if (!info.written) {
+        fail(info.type.charAt(0).toUpperCase() + info.type.slice(1) + " " + name + " is never written to",
+             info.node.loc);
+      }
     }
+  }
+
+  function fail(msg, pos) {
+    if (pos.start) msg += " (" + pos.start.line + ":" + pos.start.column + ")";
+    if (options.message)
+      options.message(pos.source, msg)
+    else
+      console["log"](pos.source + ": " + msg);
+    failed = true;
   }
 }
 
 var failed = false;
-function fail(msg, pos) {
-  if (pos.start) msg += " (" + pos.start.line + ":" + pos.start.column + ")";
-  console["log"](pos.source + ": " + msg);
-  failed = true;
-}
 
 function checkDir(dir, options) {
   fs.readdirSync(dir).forEach(function(file) {
