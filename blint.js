@@ -15,7 +15,7 @@
  [1]: https://github.com/marijnh/acorn/
 */
 
-var jsGlobals = "Infinity undefined NaN Object Function Array String Number Boolean RegExp Date Error SyntaxError ReferenceError URIError EvalError RangeError TypeError parseInt parseFloat isNaN isFinite eval encodeURI encodeURIComponent decodeURI decodeURIComponent Math JSON require console exports module".split(" ");
+var jsGlobals = "Infinity undefined NaN Object Function Array String Number Boolean RegExp Date Error SyntaxError ReferenceError URIError EvalError RangeError TypeError parseInt parseFloat isNaN isFinite eval encodeURI encodeURIComponent decodeURI decodeURIComponent Math JSON require console exports module Symbol".split(" ");
 var browserGlobals = "location Node Element Text Document document XMLDocument HTMLElement HTMLAnchorElement HTMLAreaElement HTMLAudioElement HTMLBaseElement HTMLBodyElement HTMLBRElement HTMLButtonElement HTMLCanvasElement HTMLDataElement HTMLDataListElement HTMLDivElement HTMLDListElement HTMLDocument HTMLEmbedElement HTMLFieldSetElement HTMLFormControlsCollection HTMLFormElement HTMLHeadElement HTMLHeadingElement HTMLHRElement HTMLHtmlElement HTMLIFrameElement HTMLImageElement HTMLInputElement HTMLKeygenElement HTMLLabelElement HTMLLegendElement HTMLLIElement HTMLLinkElement HTMLMapElement HTMLMediaElement HTMLMetaElement HTMLMeterElement HTMLModElement HTMLObjectElement HTMLOListElement HTMLOptGroupElement HTMLOptionElement HTMLOptionsCollection HTMLOutputElement HTMLParagraphElement HTMLParamElement HTMLPreElement HTMLProgressElement HTMLQuoteElement HTMLScriptElement HTMLSelectElement HTMLSourceElement HTMLSpanElement HTMLStyleElement HTMLTableCaptionElement HTMLTableCellElement HTMLTableColElement HTMLTableDataCellElement HTMLTableElement HTMLTableHeaderCellElement HTMLTableRowElement HTMLTableSectionElement HTMLTextAreaElement HTMLTimeElement HTMLTitleElement HTMLTrackElement HTMLUListElement HTMLUnknownElement HTMLVideoElement Attr NodeList HTMLCollection NamedNodeMap DocumentFragment DOMTokenList XPathResult ClientRect Event TouchEvent WheelEvent MouseEvent KeyboardEvent HashChangeEvent ErrorEvent CustomEvent BeforeLoadEvent WebSocket Worker localStorage sessionStorage FileList File Blob FileReader URL Range XMLHttpRequest DOMParser Selection console top parent window opener self devicePixelRatio name closed pageYOffset pageXOffset scrollY scrollX screenTop screenLeft screenY screenX innerWidth innerHeight outerWidth outerHeight frameElement crypto navigator history screen postMessage close blur focus onload onunload onscroll onresize ononline onoffline onmousewheel onmouseup onmouseover onmouseout onmousemove onmousedown onclick ondblclick onmessage onkeyup onkeypress onkeydown oninput onpopstate onhashchange onfocus onblur onerror ondrop ondragstart ondragover ondragleave ondragenter ondragend ondrag oncontextmenu onchange onbeforeunload onabort getSelection alert confirm prompt scrollBy scrollTo scroll setTimeout clearTimeout setInterval clearInterval atob btoa addEventListener removeEventListener dispatchEvent getComputedStyle CanvasRenderingContext2D importScripts".split(" ");
 
 var fs = require("fs"), acorn = require("acorn"), walk = require("acorn/dist/walk.js");
@@ -66,7 +66,7 @@ function checkFile(fileName, options, file) {
     else if (bad[0] == "\t") msg = "Found tab character";
     else msg = "Undesirable character 0x" + bad[0].charCodeAt(0).toString(16);
     var info = acorn.getLineInfo(file, bad.index);
-    fail(msg + " at line " + info.line + ", column " + info.column, {source: fileName});
+    fail(msg, {start: info, source: fileName});
   }
 
   if (options.blob && file.slice(0, options.blob.length) != options.blob)
@@ -85,7 +85,8 @@ function checkFile(fileName, options, file) {
         fail("Trailing comma", {source: fileName, start: loc});
       },
       forbidReserved: options.reservedProps ? false : "everywhere",
-      sourceFile: fileName
+      sourceFile: fileName,
+      sourceType: "module"
     });
   } catch (e) {
     fail(e.message, {source: fileName});
@@ -137,7 +138,7 @@ function checkFile(fileName, options, file) {
     TryStatement: function(node, cx, c) {
       c(node.block, cx, "Statement");
       if (node.handler) {
-        var inner = node.handler.body = makeScope(cx.scope, "block");
+        var inner = node.handler.body.scope = makeScope(cx.scope, "block");
         addVar(inner, node.handler.param.name, "catch clause", node.handler.param, false, true);
         c(node.handler.body, makeCx(inner), "ScopeBody");
       }
@@ -150,8 +151,14 @@ function checkFile(fileName, options, file) {
       for (var i = 0; i < node.body.body.length; i++)
         c(node.body.body[i], cx);
     },
+    ImportDeclaration: function(node, cx, c) {
+      for (var i = 0; i < node.specifiers.length; i++) {
+        var spec = node.specifiers[i].local
+        addVar(cx.scope, spec.name, "import", spec, false, true)
+      }
+    },
     Expression: function(node, cx, c) {
-      if (cx.binder) cx = makeCx(cx.scope)
+      if (cx.binding) cx = makeCx(cx.scope)
       c(node, cx);
     },
     VariableDeclaration: function(node, cx, c) {
@@ -159,7 +166,7 @@ function checkFile(fileName, options, file) {
         var decl = node.declarations[i];
         c(decl.id, makeCx(cx.scope, {
           scope: node.kind == "var" ? fnScope(cx.scope) : cx.scope,
-          type: "var",
+          type: node.kind == "const" ? "constant" : "variable",
           deadZone: node.kind != "var",
           written: !!decl.init
         }), "Pattern");
@@ -172,21 +179,21 @@ function checkFile(fileName, options, file) {
     },
     BlockStatement: function(node, cx, c) {
       if (!node.scope && node.body.some(isBlockScopedDecl)) {
-        node.scope = makeScope(scope, "block");
+        node.scope = makeScope(cx.scope, "block");
         cx = makeCx(node.scope)
       }
       walk.base.BlockStatement(node, cx, c);
     },
     ForInStatement: function(node, cx, c) {
       if (!node.scope && isBlockScopedDecl(node.left)) {
-        node.scope = node.body.scope = makeScope(scope, "block");
+        node.scope = node.body.scope = makeScope(cx.scope, "block");
         cx = makeCx(node.scope);
       }
       walk.base.ForInStatement(node, cx, c);
     },
     ForStatement: function(node, cx, c) {
-      if (!node.scope && isBlockScopedDecl(node.init)) {
-        node.scope = node.body.scope = makeScope(scope, "block");
+      if (!node.scope && node.init && isBlockScopedDecl(node.init)) {
+        node.scope = node.body.scope = makeScope(cx.scope, "block");
         cx = makeCx(node.scope);
       }
       walk.base.ForStatement(node, cx, c);
@@ -199,12 +206,18 @@ function checkFile(fileName, options, file) {
     UpdateExpression: function(node, scope) {assignToPattern(node.argument, scope);},
     AssignmentExpression: function(node, scope) {assignToPattern(node.left, scope);},
     Identifier: function(node, scope) {
-      // FIXME check dead zones
       if (node.name == "arguments") return;
-      var found = searchScope(node.name, scope);
-      console.trace("looking up", node.name);
-      if (found) found.read = true;
-      else globalsSeen[node.name] = node.loc;
+      readVariable(node, scope);
+    },
+    ExportNamedDeclaration: function(node, scope) {
+      if (!node.source) for (var i = 0; i < node.specifiers.length; i++)
+        readVariable(node.specifiers[i].local, scope);
+      var decl = node.declaration;
+      if (decl) {
+        if (decl.id) readVariable(node.declaration.id, scope);
+        else if (decl.declarations) for (var i = 0; i < decl.declarations.length; i++)
+          readFromPattern(decl.declarations[i].id, scope);
+      }
     },
     FunctionExpression: function(node) {
       if (node.id && !options.namedFunctions) fail("Named function expression", node.loc);
@@ -213,6 +226,9 @@ function checkFile(fileName, options, file) {
       checkReusedIndex(node);
       if (node.test && node.update)
         checkObviousInfiniteLoop(node.test, node.update);
+    },
+    ForInStatement: function(node, scope) {
+      assignToPattern(node.left.type == "VariableDeclaration" ? node.left.declarations[0].id : node.left, scope);
     },
     MemberExpression: function(node) {
       if (node.object.type == "Identifier" && node.object.name == "console" && !node.computed)
@@ -228,11 +244,10 @@ function checkFile(fileName, options, file) {
   }
   check(parsed, topScope);
 
-  function assignToPattern(node, scope, assigned) {
-    walk.simpleMaybe(node, {
+  function assignToPattern(node, scope) {
+    walk.recursive(node, null, {
       Expression: function(node) {
         check(node, scope);
-        return false;
       },
       VariablePattern: function(node) {
         var found = searchScope(node.name, scope);
@@ -240,10 +255,28 @@ function checkFile(fileName, options, file) {
           found.written = true;
         } else if (!(node.name in ignoredGlobals)) {
           ignoredGlobals[node.name] = true;
-          fail("Assignment to global variable " + node.name + ".", node.loc);
+          fail("Assignment to global variable " + node.name, node.loc);
         }
       }
-    });
+    }, null, "Pattern");
+  }
+
+  function readFromPattern(node, scope) {
+    walk.recursive(node, null, {
+      Expression: function(node) {},
+      VariablePattern: function(node) { readVariable(node, scope); }
+    }, null, "Pattern");
+  }
+
+  function readVariable(node, scope) {
+    var found = searchScope(node.name, scope);
+    if (found) {
+      found.read = true;
+      if (found.deadZone && node.start < found.node.start)
+        fail(found.type.charAt(0).toUpperCase() + found.type.slice(1) + " used before its declaration", node.loc);
+    } else {
+      globalsSeen[node.name] = node.loc;
+    }
   }
 
   function searchScope(name, scope) {
@@ -259,7 +292,7 @@ function checkFile(fileName, options, file) {
       VariableDeclaration: function(node, st, c) {
         for (var i = 0; i < node.declarations.length; i++)
           if (node.declarations[i].id.name == name)
-            fail("redefined loop variable", node.declarations[i].id.loc);
+            fail("Redefined loop variable", node.declarations[i].id.loc);
         walk.base.VariableDeclaration(node, st, c);
       }
     });
