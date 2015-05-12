@@ -15,37 +15,12 @@
  [1]: https://github.com/marijnh/acorn/
 */
 
-var jsGlobals = "Infinity undefined NaN Object Function Array String Number Boolean RegExp Date Error SyntaxError ReferenceError URIError EvalError RangeError TypeError parseInt parseFloat isNaN isFinite eval encodeURI encodeURIComponent decodeURI decodeURIComponent Math JSON require console exports module Symbol".split(" ");
-var browserGlobals = "location Node Element Text Document document XMLDocument HTMLElement HTMLAnchorElement HTMLAreaElement HTMLAudioElement HTMLBaseElement HTMLBodyElement HTMLBRElement HTMLButtonElement HTMLCanvasElement HTMLDataElement HTMLDataListElement HTMLDivElement HTMLDListElement HTMLDocument HTMLEmbedElement HTMLFieldSetElement HTMLFormControlsCollection HTMLFormElement HTMLHeadElement HTMLHeadingElement HTMLHRElement HTMLHtmlElement HTMLIFrameElement HTMLImageElement HTMLInputElement HTMLKeygenElement HTMLLabelElement HTMLLegendElement HTMLLIElement HTMLLinkElement HTMLMapElement HTMLMediaElement HTMLMetaElement HTMLMeterElement HTMLModElement HTMLObjectElement HTMLOListElement HTMLOptGroupElement HTMLOptionElement HTMLOptionsCollection HTMLOutputElement HTMLParagraphElement HTMLParamElement HTMLPreElement HTMLProgressElement HTMLQuoteElement HTMLScriptElement HTMLSelectElement HTMLSourceElement HTMLSpanElement HTMLStyleElement HTMLTableCaptionElement HTMLTableCellElement HTMLTableColElement HTMLTableDataCellElement HTMLTableElement HTMLTableHeaderCellElement HTMLTableRowElement HTMLTableSectionElement HTMLTextAreaElement HTMLTimeElement HTMLTitleElement HTMLTrackElement HTMLUListElement HTMLUnknownElement HTMLVideoElement Attr NodeList HTMLCollection NamedNodeMap DocumentFragment DOMTokenList XPathResult ClientRect Event TouchEvent WheelEvent MouseEvent KeyboardEvent HashChangeEvent ErrorEvent CustomEvent BeforeLoadEvent WebSocket Worker localStorage sessionStorage FileList File Blob FileReader URL Range XMLHttpRequest DOMParser Selection console top parent window opener self devicePixelRatio name closed pageYOffset pageXOffset scrollY scrollX screenTop screenLeft screenY screenX innerWidth innerHeight outerWidth outerHeight frameElement crypto navigator history screen postMessage close blur focus onload onunload onscroll onresize ononline onoffline onmousewheel onmouseup onmouseover onmouseout onmousemove onmousedown onclick ondblclick onmessage onkeyup onkeypress onkeydown oninput onpopstate onhashchange onfocus onblur onerror ondrop ondragstart ondragover ondragleave ondragenter ondragend ondrag oncontextmenu onchange onbeforeunload onabort getSelection alert confirm prompt scrollBy scrollTo scroll setTimeout clearTimeout setInterval clearInterval atob btoa addEventListener removeEventListener dispatchEvent getComputedStyle CanvasRenderingContext2D importScripts".split(" ");
-
 var fs = require("fs"), acorn = require("acorn"), walk = require("acorn/dist/walk.js");
 
-var defaultOptions = {
-  ecmaVersion: 5,
-  browser: false,
-  tabs: false,
-  trailing: false,
-  semicolons: null,
-  trailingCommas: false,
-  reservedProps: false,
-  namedFunctions: false,
-  declareGlobals: true,
-  allowedGlobals: null,
-  blob: false,
-  message: null
-};
-
-function getOptions(value) {
-  var opts = {};
-  if (value.autoSemicolons === false) value.semicolons = true;
-  for (var prop in defaultOptions) {
-    if (value && Object.prototype.hasOwnProperty.call(value, prop))
-      opts[prop] = value[prop];
-    else
-      opts[prop] = defaultOptions[prop];
-  }
-  return opts;
-}
+var getOptions = require("./options").getOptions;
+var buildScopes = require("./scope").buildScopes;
+var globals = require("./globals");
+var loop = require("./loop");
 
 var scopePasser = walk.make({
   Statement: function(node, prev, c) { c(node, node.scope || prev); },
@@ -74,8 +49,6 @@ function checkFile(fileName, options, text) {
   if (options.blob && text.slice(0, options.blob.length) != options.blob)
     fail("Missing license blob", {source: fileName});
 
-  var globalsSeen = Object.create(null);
-
   try {
     var ast = acorn.parse(text, {
       locations: true,
@@ -98,113 +71,9 @@ function checkFile(fileName, options, text) {
   if (options.semicolons === false)
     require("./nosemicolons")(text, ast, fail)
 
-  var scopes = [];
+  var scopes = buildScopes(ast, fail);
 
-  function makeScope(prev, type) {
-    var scope = {vars: Object.create(null), prev: prev, type: type};
-    scopes.push(scope);
-    return scope;
-  }
-  function fnScope(scope) {
-    while (scope.type != "fn") scope = scope.prev;
-    return scope;
-  }
-  function addVar(scope, name, type, node, deadZone, written) {
-    if (deadZone && (name in scope.vars))
-      fail("Duplicate definition of " + name, node.loc);
-    scope.vars[name] = {type: type, node: node, deadZone: deadZone && scope,
-                        written: written, read: false};
-  }
-
-  function makeCx(scope, binding) {
-    return {scope: scope, binding: binding};
-  }
-
-  function isBlockScopedDecl(node) {
-    return node.type == "VariableDeclaration" && node.kind != "var";
-  }
-
-  var topScope = makeScope(null, "fn");
-
-  walk.recursive(ast, makeCx(topScope), {
-    Function: function(node, cx, c) {
-      var inner = node.scope = node.body.scope = makeScope(cx.scope, "fn");
-      var innerCx = makeCx(inner, {scope: inner, type: "argument", deadZone: true, written: true});
-      for (var i = 0; i < node.params.length; ++i)
-        c(node.params[i], innerCx, "Pattern");
-
-      if (node.id) {
-        var decl = node.type == "FunctionDeclaration";
-        addVar(decl ? cx.scope : inner, node.id.name,
-               decl ? "function" : "function name", node.id, false, true);
-      }
-      c(node.body, innerCx, "ScopeBody");
-    },
-    TryStatement: function(node, cx, c) {
-      c(node.block, cx, "Statement");
-      if (node.handler) {
-        var inner = node.handler.body.scope = makeScope(cx.scope, "block");
-        addVar(inner, node.handler.param.name, "catch clause", node.handler.param, false, true);
-        c(node.handler.body, makeCx(inner), "ScopeBody");
-      }
-      if (node.finalizer) c(node.finalizer, cx, "Statement");
-    },
-    Class: function(node, cx, c) {
-      if (node.id && node.type == "ClassDeclaration")
-        addVar(cx.scope, node.id.name, "class name", node, true, true);
-      if (node.superClass) c(node.superClass, cx, "Expression");
-      for (var i = 0; i < node.body.body.length; i++)
-        c(node.body.body[i], cx);
-    },
-    ImportDeclaration: function(node, cx, c) {
-      for (var i = 0; i < node.specifiers.length; i++) {
-        var spec = node.specifiers[i].local
-        addVar(cx.scope, spec.name, "import", spec, false, true)
-      }
-    },
-    Expression: function(node, cx, c) {
-      if (cx.binding) cx = makeCx(cx.scope)
-      c(node, cx);
-    },
-    VariableDeclaration: function(node, cx, c) {
-      for (var i = 0; i < node.declarations.length; ++i) {
-        var decl = node.declarations[i];
-        c(decl.id, makeCx(cx.scope, {
-          scope: node.kind == "var" ? fnScope(cx.scope) : cx.scope,
-          type: node.kind == "const" ? "constant" : "variable",
-          deadZone: node.kind != "var",
-          written: !!decl.init
-        }), "Pattern");
-        if (decl.init) c(decl.init, cx, "Expression");
-      }
-    },
-    VariablePattern: function(node, cx, c) {
-      var b = cx.binding;
-      if (b) addVar(b.scope, node.name, b.type, node, b.deadZone, b.written);
-    },
-    BlockStatement: function(node, cx, c) {
-      if (!node.scope && node.body.some(isBlockScopedDecl)) {
-        node.scope = makeScope(cx.scope, "block");
-        cx = makeCx(node.scope)
-      }
-      walk.base.BlockStatement(node, cx, c);
-    },
-    ForInStatement: function(node, cx, c) {
-      if (!node.scope && isBlockScopedDecl(node.left)) {
-        node.scope = node.body.scope = makeScope(cx.scope, "block");
-        cx = makeCx(node.scope);
-      }
-      walk.base.ForInStatement(node, cx, c);
-    },
-    ForStatement: function(node, cx, c) {
-      if (!node.scope && node.init && isBlockScopedDecl(node.init)) {
-        node.scope = node.body.scope = makeScope(cx.scope, "block");
-        cx = makeCx(node.scope);
-      }
-      walk.base.ForStatement(node, cx, c);
-    }
-  }, null);
-
+  var globalsSeen = Object.create(null);
   var ignoredGlobals = Object.create(null);
 
   var checkWalker = {
@@ -226,9 +95,9 @@ function checkFile(fileName, options, text) {
       if (node.id && !options.namedFunctions) fail("Named function expression", node.loc);
     },
     ForStatement: function(node) {
-      checkReusedIndex(node);
+      loop.checkReusedIndex(node, fail);
       if (node.test && node.update)
-        checkObviousInfiniteLoop(node.test, node.update);
+        loop.checkObviousInfiniteLoop(node.test, node.update, fail);
     },
     ForInStatement: function(node, scope) {
       assignToPattern(node.left.type == "VariableDeclaration" ? node.left.declarations[0].id : node.left, scope);
@@ -245,7 +114,7 @@ function checkFile(fileName, options, text) {
   function check(node, scope) {
     walk.simple(node, checkWalker, scopePasser, scope);
   }
-  check(ast, topScope);
+  check(ast, scopes.top);
 
   function assignToPattern(node, scope) {
     walk.recursive(node, null, {
@@ -305,68 +174,13 @@ function checkFile(fileName, options, text) {
       if (name in cur.vars) return cur.vars[name];
   }
 
-  function checkReusedIndex(node) {
-    if (!node.init || node.init.type != "VariableDeclaration") return;
-    var name = node.init.declarations[0].id.name;
-    walk.recursive(node.body, null, {
-      Function: function() {},
-      VariableDeclaration: function(node, st, c) {
-        for (var i = 0; i < node.declarations.length; i++)
-          if (node.declarations[i].id.name == name)
-            fail("Redefined loop variable", node.declarations[i].id.loc);
-        walk.base.VariableDeclaration(node, st, c);
-      }
-    });
-  }
-
-  function checkObviousInfiniteLoop(test, update) {
-    var vars = Object.create(null);
-    function opDir(op) {
-      if (/[<+]/.test(op)) return 1;
-      if (/[->]/.test(op)) return -1;
-      return 0;
-    }
-    function store(name, dir) {
-      if (!(name in vars)) vars[name] = {below: false, above: false};
-      if (dir > 0) vars[name].up = true;
-      if (dir < 0) vars[name].down = true;
-    }
-    function check(node, dir) {
-      var known = vars[node.name];
-      if (!known) return;
-      if (dir > 0 && known.down && !known.up ||
-          dir < 0 && known.up && !known.down)
-        fail("Suspiciously infinite-looking loop", node.loc);
-    }
-    walk.simple(test, {
-      BinaryExpression: function(node) {
-        if (node.left.type == "Identifier")
-          store(node.left.name, opDir(node.operator));
-        if (node.right.type == "Identifier")
-          store(node.right.name, -opDir(node.operator));
-      }
-    });
-    walk.simple(update, {
-      UpdateExpression: function(node) {
-        if (node.argument.type == "Identifier")
-          check(node.argument, opDir(node.operator));
-      },
-      AssignmentExpression: function(node) {
-        if (node.left.type == "Identifier") {
-          if (node.operator == "=" && node.right.type == "BinaryExpression" && node.right.left.name == node.left.name)
-            check(node.left, opDir(node.right.operator));
-          else
-            check(node.left, opDir(node.operator));
-        }
-      }
-    });
-  }
-
-  var allowedGlobals = Object.create(options.declareGlobals ? topScope.vars : null), m;
+  var allowedGlobals = Object.create(options.declareGlobals ? scopes.top.vars : null), m;
   if (options.allowedGlobals) options.allowedGlobals.forEach(function(v) { allowedGlobals[v] = true; });
-  for (var i = 0; i < jsGlobals.length; i++) allowedGlobals[jsGlobals[i]] = true;
+  for (var i = 0; i < globals.jsGlobals.length; i++)
+    allowedGlobals[globals.jsGlobals[i]] = true;
   if (options.browser)
-    for (var i = 0; i < browserGlobals.length; i++) allowedGlobals[browserGlobals[i]] = true;
+    for (var i = 0; i < globals.browserGlobals.length; i++)
+      allowedGlobals[globals.browserGlobals[i]] = true;
 
   if (m = text.match(/\/\/ declare global:\s+(.*)/))
     m[1].split(/,\s*/g).forEach(function(n) { allowedGlobals[n] = true; });
@@ -374,8 +188,8 @@ function checkFile(fileName, options, text) {
     if (!(glob in allowedGlobals))
       fail("Access to global variable " + glob + ".", globalsSeen[glob]);
 
-  for (var i = 0; i < scopes.length; ++i) {
-    var scope = scopes[i];
+  for (var i = 0; i < scopes.all.length; ++i) {
+    var scope = scopes.all[i];
     for (var name in scope.vars) {
       var info = scope.vars[name];
       if (!info.read) {
