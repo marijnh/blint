@@ -67,7 +67,7 @@ module.exports = function(text, ast, fail) {
           while (text.charCodeAt(firstNonWs + 1) == 32) { ++firstNonWs; ++startCol; }
           if (statementCol >= startCol && needsLeadingSemicolon(text, firstNonWs)) {
             fail("Possibly accidentally continued statement", node.loc);
-            break; 
+            break;
           }
           nextNewline = text.indexOf("\n", nextNewline + 1);
         }

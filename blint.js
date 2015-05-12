@@ -135,7 +135,7 @@ function checkFile(fileName, options, text) {
 
   function readFromPattern(node, scope) {
     walk.recursive(node, null, {
-      Expression: function(node) {},
+      Expression: function() {},
       VariablePattern: function(node) { readVariable(node, scope); }
     }, null, "Pattern");
   }

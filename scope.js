@@ -59,7 +59,7 @@ exports.buildScopes = function(ast, fail) {
       for (var i = 0; i < node.body.body.length; i++)
         c(node.body.body[i], cx);
     },
-    ImportDeclaration: function(node, cx, c) {
+    ImportDeclaration: function(node, cx) {
       for (var i = 0; i < node.specifiers.length; i++) {
         var spec = node.specifiers[i].local
         addVar(cx.scope, spec.name, "import", spec, false, true)
@@ -81,7 +81,7 @@ exports.buildScopes = function(ast, fail) {
         if (decl.init) c(decl.init, cx, "Expression");
       }
     },
-    VariablePattern: function(node, cx, c) {
+    VariablePattern: function(node, cx) {
       var b = cx.binding;
       if (b) addVar(b.scope, node.name, b.type, node, b.deadZone, b.written);
     },
