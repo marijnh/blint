@@ -25,7 +25,7 @@ var defaultOptions = {
   browser: false,
   tabs: false,
   trailing: false,
-  autoSemicolons: false,
+  semicolons: null,
   trailingCommas: false,
   reservedProps: false,
   namedFunctions: false,
@@ -37,6 +37,7 @@ var defaultOptions = {
 
 function getOptions(value) {
   var opts = {};
+  if (value.autoSemicolons === false) value.semicolons = true;
   for (var prop in defaultOptions) {
     if (value && Object.prototype.hasOwnProperty.call(value, prop))
       opts[prop] = value[prop];
@@ -47,38 +48,39 @@ function getOptions(value) {
 }
 
 var scopePasser = walk.make({
-  Statement: function(node, prev, c) { c(node, node.scope || prev); }
+  Statement: function(node, prev, c) { c(node, node.scope || prev); },
+  Function: function(node, _prev, c) { walk.base.Function(node, node.scope, c) }
 });
 
-function checkFile(fileName, options, file) {
+function checkFile(fileName, options, text) {
   options = getOptions(options);
-  if (file == null) file = fs.readFileSync(fileName, "utf8");
+  if (text == null) text = fs.readFileSync(fileName, "utf8");
 
   var bad, msg;
   if (!options.trailing)
-    bad = file.match(/[\t ]\n/);
+    bad = text.match(/[\t ]\n/);
   if (!bad && !options.tabs)
-    bad = file.match(/\t/);
+    bad = text.match(/\t/);
   if (!bad)
-    bad = file.match(/[\x00-\x08\x0b\x0c\x0e-\x19\uFEFF]/);
+    bad = text.match(/[\x00-\x08\x0b\x0c\x0e-\x19\uFEFF]/);
   if (bad) {
     if (bad[0].indexOf("\n") > -1) msg = "Trailing whitespace";
     else if (bad[0] == "\t") msg = "Found tab character";
     else msg = "Undesirable character 0x" + bad[0].charCodeAt(0).toString(16);
-    var info = acorn.getLineInfo(file, bad.index);
+    var info = acorn.getLineInfo(text, bad.index);
     fail(msg, {start: info, source: fileName});
   }
 
-  if (options.blob && file.slice(0, options.blob.length) != options.blob)
+  if (options.blob && text.slice(0, options.blob.length) != options.blob)
     fail("Missing license blob", {source: fileName});
 
   var globalsSeen = Object.create(null);
 
   try {
-    var parsed = acorn.parse(file, {
+    var ast = acorn.parse(text, {
       locations: true,
       ecmaVersion: options.ecmaVersion,
-      onInsertedSemicolon: options.autoSemicolons ? null : function(_, loc) {
+      onInsertedSemicolon: options.semicolons !== true ? null : function(_, loc) {
         fail("Missing semicolon", {source: fileName, start: loc});
       },
       onTrailingComma: options.trailingCommas ? null : function(_, loc) {
@@ -92,6 +94,9 @@ function checkFile(fileName, options, file) {
     fail(e.message, {source: fileName});
     return;
   }
+
+  if (options.semicolons === false)
+    require("./nosemicolons")(text, ast, fail)
 
   var scopes = [];
 
@@ -107,7 +112,7 @@ function checkFile(fileName, options, file) {
   function addVar(scope, name, type, node, deadZone, written) {
     if (deadZone && (name in scope.vars))
       fail("Duplicate definition of " + name, node.loc);
-    scope.vars[name] = {type: type, node: node, deadZone: deadZone,
+    scope.vars[name] = {type: type, node: node, deadZone: deadZone && scope,
                         written: written, read: false};
   }
 
@@ -121,7 +126,7 @@ function checkFile(fileName, options, file) {
 
   var topScope = makeScope(null, "fn");
 
-  walk.recursive(parsed, makeCx(topScope), {
+  walk.recursive(ast, makeCx(topScope), {
     Function: function(node, cx, c) {
       var inner = node.scope = node.body.scope = makeScope(cx.scope, "fn");
       var innerCx = makeCx(inner, {scope: inner, type: "argument", deadZone: true, written: true});
@@ -212,12 +217,10 @@ function checkFile(fileName, options, file) {
     ExportNamedDeclaration: function(node, scope) {
       if (!node.source) for (var i = 0; i < node.specifiers.length; i++)
         readVariable(node.specifiers[i].local, scope);
-      var decl = node.declaration;
-      if (decl) {
-        if (decl.id) readVariable(node.declaration.id, scope);
-        else if (decl.declarations) for (var i = 0; i < decl.declarations.length; i++)
-          readFromPattern(decl.declarations[i].id, scope);
-      }
+      exportDecl(node.declaration, scope);
+    },
+    ExportDefaultDeclaration: function(node, scope) {
+      exportDecl(node.declaration, scope);
     },
     FunctionExpression: function(node) {
       if (node.id && !options.namedFunctions) fail("Named function expression", node.loc);
@@ -242,7 +245,7 @@ function checkFile(fileName, options, file) {
   function check(node, scope) {
     walk.simple(node, checkWalker, scopePasser, scope);
   }
-  check(parsed, topScope);
+  check(ast, topScope);
 
   function assignToPattern(node, scope) {
     walk.recursive(node, null, {
@@ -272,10 +275,28 @@ function checkFile(fileName, options, file) {
     var found = searchScope(node.name, scope);
     if (found) {
       found.read = true;
-      if (found.deadZone && node.start < found.node.start)
+      if (found.deadZone && node.start < found.node.start && sameFunction(scope, found.deadZone))
         fail(found.type.charAt(0).toUpperCase() + found.type.slice(1) + " used before its declaration", node.loc);
     } else {
       globalsSeen[node.name] = node.loc;
+    }
+  }
+
+  function exportDecl(decl, scope) {
+    if (!decl) return;
+    if (decl.id) {
+      readVariable(decl.id, scope);
+    } else if (decl.declarations) {
+      for (var i = 0; i < decl.declarations.length; i++)
+        readFromPattern(decl.declarations[i].id, scope);
+    }
+  }
+
+  function sameFunction(inner, outer) {
+    for (;;) {
+      if (inner == outer) return true;
+      if (inner.type == "fn") return false;
+      inner = inner.prev;
     }
   }
 
@@ -347,7 +368,7 @@ function checkFile(fileName, options, file) {
   if (options.browser)
     for (var i = 0; i < browserGlobals.length; i++) allowedGlobals[browserGlobals[i]] = true;
 
-  if (m = file.match(/\/\/ declare global:\s+(.*)/))
+  if (m = text.match(/\/\/ declare global:\s+(.*)/))
     m[1].split(/,\s*/g).forEach(function(n) { allowedGlobals[n] = true; });
   for (var glob in globalsSeen)
     if (!(glob in allowedGlobals))
