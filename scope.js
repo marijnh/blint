@@ -41,7 +41,7 @@ exports.buildScopes = function(ast, fail) {
         addVar(decl ? cx.scope : inner, node.id.name,
                decl ? "function" : "function name", node.id, false, true);
       }
-      c(node.body, innerCx, "ScopeBody");
+      c(node.body, innerCx, node.expression ? "ScopeExpression" : "ScopeBody")
     },
     TryStatement: function(node, cx, c) {
       c(node.block, cx, "Statement");
