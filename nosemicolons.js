@@ -70,6 +70,7 @@ module.exports = function(text, ast, fail) {
             break;
           }
           nextNewline = text.indexOf("\n", nextNewline + 1);
+          if (nextNewline < 0) break
         }
       }
     }
