@@ -202,8 +202,9 @@ function checkFile(fileName, options, text) {
     }
   }
 
-  function fail(msg, pos) {
-    if (pos.start) msg += " (" + pos.start.line + ":" + pos.start.column + ")";
+  function fail(msg, pos, end) {
+    let loc = end ? pos.end : pos.start
+    if (loc) msg += " (" + loc.line + ":" + loc.column + ")";
     if (options.message)
       options.message(pos.source, msg)
     else

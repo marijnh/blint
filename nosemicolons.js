@@ -46,18 +46,17 @@ module.exports = function(text, ast, fail) {
   walk.ancestor(ast, {
     Statement: function(node, parents) {
       var parent = parents[parents.length - 2];
+
       if (parent.init == this || parent.left == this ||
-          node.type == "Program" || node.type == "BlockStatement")
+          /^(?:(?:For|ForIn|ForOf|While|Block|Empty|If|Labeled|With|Switch|Try)Statement|Program)$/.test(node.type))
         return; // A for or for/in init clause or a block
 
       if (text.charAt(node.end - 1) == ";" && !textAfter(node, text))
-        fail("Semicolon found", node.loc);
-      if (needsLeadingSemicolon(text, node.start)) {
-        if (text.charAt(node.start - 1) != ";")
-          fail("Missing leading semicolon", node.loc);
-        else if (parent.type != "BlockStatement" && parent.type != "Program")
-          fail("Statements with leading semicolons should be wrapped in a block", node.loc);
-      }
+        fail("Semicolon found", node.loc, true);
+      if (needsLeadingSemicolon(text, node.start) &&
+          (parent.type == "BlockStatement" || parent.type == "Program") &&
+          text.charAt(node.start - 1) != ";")
+        fail("Missing leading semicolon", node.loc);
 
       var nextNewline = text.indexOf("\n", node.start);
       if (nextNewline < node.end) {
