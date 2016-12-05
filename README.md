@@ -21,19 +21,19 @@ argument. These are the defaults:
 ```javascript
 var defaultOptions = {
   // Version of the language to parse
-  ecmaVersion: 5,
+  ecmaVersion: 6,
   // Whitelist globals exported by the browser
   browser: false,
   // Allow tabs
   tabs: false,
   // Allow trailing whitespace
-  trailing: false,
+  trailingSpace: false,
   // True to require semicolons, false to disallow them
   semicolons: null,
   // Allow trailing commas
-  trailingCommas: false,
+  trailingCommas: true,
   // Allow unquoted properties that are reserved words
-  reservedProps: false,
+  reservedProps: true,
   // Allow the code to declare top-level variables
   declareGlobals: true
 };

@@ -32,7 +32,7 @@ function checkFile(fileName, options, text) {
   if (text == null) text = fs.readFileSync(fileName, "utf8");
 
   var bad, msg;
-  if (!options.trailing)
+  if (!options.trailingSpace)
     bad = text.match(/[\t ]\n/);
   if (!bad && !options.tabs)
     bad = text.match(/\t/);

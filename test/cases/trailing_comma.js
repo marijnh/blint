@@ -1,4 +1,6 @@
+// options={"trailingCommas": false}
+
 [1, 2, 3,];
 
 // ---
-// Trailing comma (1:8)
+// Trailing comma (3:8)
