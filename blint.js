@@ -102,6 +102,9 @@ function checkFile(fileName, options, text) {
     ForInStatement: function(node, scope) {
       assignToPattern(node.left.type == "VariableDeclaration" ? node.left.declarations[0].id : node.left, scope);
     },
+    ForOfStatement: function(node, scope) {
+      assignToPattern(node.left.type == "VariableDeclaration" ? node.left.declarations[0].id : node.left, scope);
+    },
     MemberExpression: function(node) {
       if (node.object.type == "Identifier" && node.object.name == "console" && !node.computed)
         fail("Found console." + node.property.name, node.loc);
