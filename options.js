@@ -7,6 +7,7 @@ var defaultOptions = {
   trailingCommas: true,
   reservedProps: true,
   namedFunctions: true,
+  console: false,
   declareGlobals: true,
   allowedGlobals: null,
   blob: false,

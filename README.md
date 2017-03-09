@@ -34,6 +34,10 @@ var defaultOptions = {
   trailingCommas: true,
   // Allow unquoted properties that are reserved words
   reservedProps: true,
+  // Whether to allow console.* expressions
+  console: false,
+  // An array of global variables to allow
+  allowedGlobals: [],
   // Allow the code to declare top-level variables
   declareGlobals: true
 };

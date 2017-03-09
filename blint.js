@@ -106,7 +106,7 @@ function checkFile(fileName, options, text) {
       assignToPattern(node.left.type == "VariableDeclaration" ? node.left.declarations[0].id : node.left, scope);
     },
     MemberExpression: function(node) {
-      if (node.object.type == "Identifier" && node.object.name == "console" && !node.computed)
+      if (!options.console && node.object.type == "Identifier" && node.object.name == "console" && !node.computed)
         fail("Found console." + node.property.name, node.loc);
     },
     DebuggerStatement: function(node) {
