@@ -16,9 +16,14 @@ exports.checkReusedIndex = function(node, fail) {
 
 exports.checkObviousInfiniteLoop = function(test, update, fail) {
   var vars = Object.create(null);
+  function compDir(op) {
+    if (op == "<" || op == "<=") return 1;
+    if (op == ">" || op == ">=") return -1;
+    return 0;
+  }
   function opDir(op) {
-    if (/[<+]/.test(op)) return 1;
-    if (/[->]/.test(op)) return -1;
+    if (/\+/.test(op)) return 1;
+    if (/-/.test(op)) return -1;
     return 0;
   }
   function store(name, dir) {
@@ -36,9 +41,9 @@ exports.checkObviousInfiniteLoop = function(test, update, fail) {
   walk.simple(test, {
     BinaryExpression: function(node) {
       if (node.left.type == "Identifier")
-        store(node.left.name, opDir(node.operator));
+        store(node.left.name, compDir(node.operator));
       if (node.right.type == "Identifier")
-        store(node.right.name, -opDir(node.operator));
+        store(node.right.name, -compDir(node.operator));
     }
   });
   walk.simple(update, {
