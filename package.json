@@ -28,7 +28,7 @@
     "blint": "./bin/blint"
   },
   "dependencies": {
-    "acorn": "^2.0.1",
+    "acorn": "^5.1.0",
     "nomnom": "^1.8.1"
   },
   "scripts": {
