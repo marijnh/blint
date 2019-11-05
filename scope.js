@@ -1,4 +1,4 @@
-var walk = require("acorn/dist/walk.js");
+var walk = require("acorn-walk");
 
 exports.buildScopes = function(ast, fail) {
   var scopes = [];
@@ -41,14 +41,14 @@ exports.buildScopes = function(ast, fail) {
         addVar(decl ? cx.scope : inner, node.id.name,
                decl ? "function" : "function name", node.id, false, true);
       }
-      c(node.body, innerCx, node.expression ? "ScopeExpression" : "ScopeBody")
+      c(node.body, innerCx, node.expression ? "Expression" : "Statement")
     },
     TryStatement: function(node, cx, c) {
       c(node.block, cx, "Statement");
       if (node.handler) {
         var inner = node.handler.body.scope = makeScope(cx.scope, "block");
         addVar(inner, node.handler.param.name, "catch clause", node.handler.param, false, true);
-        c(node.handler.body, makeCx(inner), "ScopeBody");
+        c(node.handler.body, makeCx(inner), "Statement");
       }
       if (node.finalizer) c(node.finalizer, cx, "Statement");
     },

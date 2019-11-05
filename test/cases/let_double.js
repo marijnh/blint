@@ -6,4 +6,4 @@ let _x = 10;
   let _z = 60; }
 
 // ---
-// Duplicate definition of _z (6:6)
+// Identifier '_z' has already been declared (6:6)

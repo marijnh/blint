@@ -1,4 +1,4 @@
-var walk = require("acorn/dist/walk.js");
+var walk = require("acorn-walk");
 
 // Enforce (safe) semicolon-free style
 //

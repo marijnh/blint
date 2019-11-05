@@ -1,5 +1,5 @@
 var defaultOptions = {
-  ecmaVersion: 6,
+  ecmaVersion: 10,
   browser: false,
   tabs: false,
   trailingSpace: false,

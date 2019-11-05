@@ -1,4 +1,4 @@
-var walk = require("acorn/dist/walk.js");
+var walk = require("acorn-walk");
 
 exports.checkReusedIndex = function(node, fail) {
   if (!node.init || node.init.type != "VariableDeclaration") return;

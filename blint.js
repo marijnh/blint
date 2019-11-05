@@ -15,7 +15,7 @@
  [1]: https://github.com/marijnh/acorn/
 */
 
-var fs = require("fs"), acorn = require("acorn"), walk = require("acorn/dist/walk.js");
+var fs = require("fs"), acorn = require("acorn"), walk = require("acorn-walk");
 
 var getOptions = require("./options").getOptions;
 var buildScopes = require("./scope").buildScopes;
