@@ -47,7 +47,7 @@ exports.buildScopes = function(ast, fail) {
       c(node.block, cx, "Statement");
       if (node.handler) {
         var inner = node.handler.body.scope = makeScope(cx.scope, "block");
-        addVar(inner, node.handler.param.name, "catch clause", node.handler.param, false, true);
+        if (node.handler.param) addVar(inner, node.handler.param.name, "catch clause", node.handler.param, false, true);
         c(node.handler.body, makeCx(inner), "Statement");
       }
       if (node.finalizer) c(node.finalizer, cx, "Statement");
